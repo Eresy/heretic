@@ -67,9 +67,10 @@ from pydantic import ValidationError
 from questionary import Choice, Style
 from rich.table import Table
 from rich.traceback import install
+from torch import Tensor
 
 from .analyzer import Analyzer
-from .config import ExportStrategy, QuantizationMethod
+from .config import ClusteringMethod, ExportStrategy, QuantizationMethod
 from .evaluator import Evaluator
 from .model import AbliterationParameters, Model, get_model_class
 from .plugin import is_builtin_plugin
@@ -92,6 +93,11 @@ from .utils import (
     print_memory_usage,
     upload_reproduce_folder,
 )
+
+# Iteration cap for k-means clustering of residuals, and the centroid movement
+# below which it is considered converged.
+KMEANS_MAX_ITERATIONS = 100
+KMEANS_TOLERANCE = 1e-6
 
 
 def obtain_export_strategy(
@@ -172,6 +178,130 @@ def obtain_export_strategy(
             ],
             style=Style([("highlighted", "reverse")]),
         ),
+    )
+
+
+def compute_residual_directions_kmeans(
+    bad_residuals: Tensor,
+    good_means: Tensor,
+    num_directions: int,
+) -> Tensor:
+    """
+    Computes multiple residual directions per layer using k-means clustering.
+
+    Takes bad residuals of shape (n_bad, num_layers + 1, hidden_size) and good means
+    of shape (num_layers + 1, hidden_size). Returns directions of shape
+    (num_layers + 1, num_directions, hidden_size).
+    """
+    num_layers = bad_residuals.shape[1]
+    hidden_size = bad_residuals.shape[2]
+
+    directions = torch.zeros(
+        num_layers,
+        num_directions,
+        hidden_size,
+        dtype=torch.float32,
+        device=bad_residuals.device,
+    )
+
+    for layer_index in range(num_layers):
+        data = bad_residuals[:, layer_index, :].float()
+
+        # Initialize the centroids with random data points. The global seed has already
+        # been set, so this is reproducible.
+        permutation = torch.randperm(data.shape[0], device=data.device)
+        centroids = data[permutation[:num_directions]].clone()
+
+        for _ in range(KMEANS_MAX_ITERATIONS):
+            # Assign each point to the nearest centroid.
+            assignments = torch.cdist(data, centroids).argmin(dim=1)
+
+            # Recompute the centroids, keeping the previous one for empty clusters.
+            new_centroids = centroids.clone()
+            for index in range(num_directions):
+                mask = assignments == index
+                if mask.any():
+                    new_centroids[index] = data[mask].mean(dim=0)
+
+            if torch.allclose(centroids, new_centroids, atol=KMEANS_TOLERANCE):
+                break
+
+            centroids = new_centroids
+
+        # Each centroid yields a direction relative to the good mean.
+        difference = centroids - good_means[layer_index].float().unsqueeze(0)
+        directions[layer_index] = F.normalize(difference, p=2, dim=-1)
+
+    return directions
+
+
+def compute_residual_directions_som(
+    bad_residuals: Tensor,
+    good_means: Tensor,
+    settings: Settings,
+) -> Tensor:
+    """
+    Computes multiple residual directions per layer using a self-organizing map.
+
+    Trains a square map per layer on the bad residuals, then selects the neurons with
+    the highest activation counts. Each selected neuron yields a cluster center.
+    Shapes match `compute_residual_directions_kmeans`.
+    """
+    from minisom import MiniSom
+
+    num_directions = settings.num_refusal_directions
+    num_layers = bad_residuals.shape[1]
+    hidden_size = bad_residuals.shape[2]
+
+    directions = torch.zeros(
+        num_layers,
+        num_directions,
+        hidden_size,
+        dtype=torch.float32,
+        device=bad_residuals.device,
+    )
+
+    for layer_index in range(num_layers):
+        data = bad_residuals[:, layer_index, :].float().cpu().numpy()
+
+        som = MiniSom(
+            settings.som_grid_size,
+            settings.som_grid_size,
+            hidden_size,
+            sigma=settings.som_sigma,
+            learning_rate=settings.som_learning_rate,
+            random_seed=settings.seed,
+        )
+        som.random_weights_init(data)
+        som.train(data, settings.som_iterations, verbose=False)
+
+        # Select the neurons that win the most data points.
+        activation_counts = som.activation_response(data).flatten()
+        winners = activation_counts.argsort()[::-1][:num_directions]
+
+        weights = som.get_weights().reshape(-1, hidden_size)
+        centers = torch.from_numpy(weights[winners].copy()).float()
+
+        difference = centers - good_means[layer_index].float().cpu().unsqueeze(0)
+        directions[layer_index] = F.normalize(difference, p=2, dim=-1).to(
+            bad_residuals.device
+        )
+
+    return directions
+
+
+def compute_residual_directions(
+    bad_residuals: Tensor,
+    good_means: Tensor,
+    settings: Settings,
+) -> Tensor:
+    if settings.clustering_method == ClusteringMethod.SOM:
+        return compute_residual_directions_som(bad_residuals, good_means, settings)
+
+    return compute_residual_directions_kmeans(
+        bad_residuals,
+        good_means,
+        settings.num_refusal_directions,
     )
 
 
@@ -538,7 +668,13 @@ def run():
     print()
     print("Calculating per-layer residual directions...")
 
-    needs_full_residuals = settings.print_residual_geometry or settings.plot_residuals
+    # Clustering the bad residuals needs each one individually, not just their mean.
+    is_multi_direction = settings.num_refusal_directions > 1
+
+    needs_analysis = settings.print_residual_geometry or settings.plot_residuals
+    needs_full_residuals = needs_analysis or is_multi_direction
+
+    bad_residuals = None
 
     if needs_full_residuals:
         print("* Obtaining residuals for good prompts...")
@@ -549,34 +685,54 @@ def run():
         good_means = good_residuals.mean(dim=0)
         bad_means = bad_residuals.mean(dim=0)
 
-        analyzer = Analyzer(settings, model, good_residuals, bad_residuals)
+        if needs_analysis:
+            analyzer = Analyzer(settings, model, good_residuals, bad_residuals)
 
-        if settings.print_residual_geometry:
-            analyzer.print_residual_geometry()
+            if settings.print_residual_geometry:
+                analyzer.print_residual_geometry()
 
-        if settings.plot_residuals:
-            analyzer.plot_residuals()
+            if settings.plot_residuals:
+                analyzer.plot_residuals()
 
-        # We don't need the full residuals after computing their means and analyzing geometry.
-        del good_residuals, bad_residuals, analyzer
+            del analyzer
+
+        # Only the mean of the good residuals is ever needed.
+        del good_residuals
+
+        if not is_multi_direction:
+            del bad_residuals
+            bad_residuals = None
     else:
         print("* Obtaining residual mean for good prompts...")
         good_means = model.get_residuals_mean(good_prompts)
         print("* Obtaining residual mean for bad prompts...")
         bad_means = model.get_residuals_mean(bad_prompts)
 
-    residual_directions = F.normalize(bad_means - good_means, p=2, dim=1)
+    if bad_residuals is not None:
+        print(
+            f"* Clustering residuals into [bold]{settings.num_refusal_directions}[/] "
+            f"direction(s) per layer using [bold]{settings.clustering_method.value}[/]..."
+        )
+        residual_directions = compute_residual_directions(
+            bad_residuals, good_means, settings
+        )
+        del bad_residuals
+    else:
+        # A single direction per layer is the difference of the means.
+        residual_directions = F.normalize(bad_means - good_means, p=2, dim=1).unsqueeze(
+            1
+        )
 
     if settings.orthogonalize_direction:
         # Implements https://huggingface.co/blog/grimjim/projected-abliteration
         # Adjust the residual directions so that only the component that is
         # orthogonal to the good direction is subtracted during abliteration.
-        good_directions = F.normalize(good_means, p=2, dim=1)
-        projection_vector = torch.sum(residual_directions * good_directions, dim=1)
-        residual_directions = (
-            residual_directions - projection_vector.unsqueeze(1) * good_directions
+        good_directions = F.normalize(good_means, p=2, dim=1).unsqueeze(1)
+        projection_vector = torch.sum(
+            residual_directions * good_directions, dim=-1, keepdim=True
         )
-        residual_directions = F.normalize(residual_directions, p=2, dim=1)
+        residual_directions = residual_directions - projection_vector * good_directions
+        residual_directions = F.normalize(residual_directions, p=2, dim=-1)
         del good_directions, projection_vector
 
     del good_means, bad_means

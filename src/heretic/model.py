@@ -212,11 +212,15 @@ class Model:
         target_modules = sorted(target_modules_set)
 
         if self.settings.row_normalization != RowNormalization.FULL:
-            # Rank 1 is sufficient for directional ablation without renormalization.
-            lora_rank = 1
+            # Each residual direction contributes one rank-1 update.
+            lora_rank = self.settings.num_refusal_directions
         else:
             # Row magnitude preservation introduces nonlinear effects.
-            lora_rank = self.settings.full_normalization_lora_rank
+            # The rank must still be able to hold every direction.
+            lora_rank = max(
+                self.settings.full_normalization_lora_rank,
+                self.settings.num_refusal_directions,
+            )
 
         self.peft_config = LoraConfig(
             r=lora_rank,
@@ -464,6 +468,7 @@ class Model:
         direction_index: float | None,
         parameters: dict[str, AbliterationParameters],
     ):
+        # residual_directions has shape (num_layers + 1, num_directions, hidden_size).
         if direction_index is None:
             residual_direction = None
         else:
@@ -476,7 +481,8 @@ class Model:
                     weight,
                 ),
                 p=2,
-                dim=0,
+                # Normalize each direction along the hidden size.
+                dim=-1,
             )
 
         # Note that some implementations of abliteration also orthogonalize
@@ -522,11 +528,12 @@ class Model:
                     #        module types depending on the chosen quantization.
                     module = cast(Linear, module)
 
-                    # LoRA abliteration: delta W = -lambda * v * (v^T W)
-                    # lora_B = -lambda * v
-                    # lora_A = v^T W
+                    # LoRA abliteration for the directions V, of shape (rank, d_out):
+                    # lora_A = V W, of shape (rank, d_in)
+                    # lora_B = -lambda * V^T, of shape (d_out, rank)
+                    # delta W = lora_B lora_A, the sum of one rank-1 update per direction.
 
-                    # Use the FP32 residual direction directly (no downcast/upcast)
+                    # Use the FP32 residual directions directly (no downcast/upcast)
                     # and move to the correct device.
                     v = layer_residual_direction.to(module.weight.device)
 
@@ -565,14 +572,14 @@ class Model:
                         # Normalize the weight matrix along the rows.
                         W = F.normalize(W, p=2, dim=1)
 
-                    # Calculate lora_A = v^T W
-                    # v is (d_out,), W is (d_out, d_in)
-                    # v @ W -> (d_in,)
-                    lora_A = (v @ W).view(1, -1)
+                    # Calculate lora_A = V W
+                    # V is (rank, d_out), W is (d_out, d_in)
+                    # V @ W -> (rank, d_in)
+                    lora_A = v @ W
 
-                    # Calculate lora_B = -weight * v
-                    # v is (d_out,)
-                    lora_B = (-weight * v).view(-1, 1)
+                    # Calculate lora_B = -weight * V^T
+                    # V is (rank, d_out)
+                    lora_B = -weight * v.mT
 
                     if self.settings.row_normalization == RowNormalization.PRE:
                         # Make the LoRA adapter apply to the original weight matrix.

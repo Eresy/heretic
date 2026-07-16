@@ -28,6 +28,7 @@ dependencies = [
     "huggingface-hub~=1.7",
     "immutabledict~=4.3",
     "langdetect~=1.0",
+    "minisom~=2.3",
     "lm-eval[hf]~=0.4",
     "numpy~=2.2",
     "optuna~=4.7",

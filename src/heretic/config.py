@@ -39,6 +39,11 @@ class RowNormalization(str, Enum):
     FULL = "full"
 
 
+class ClusteringMethod(str, Enum):
+    KMEANS = "kmeans"
+    SOM = "som"
+
+
 class ExportStrategy(str, Enum):
     MERGE = "merge"
     ADAPTER = "adapter"
@@ -378,6 +383,49 @@ class Settings(BaseSettings):
             "and this determines the rank of that approximation. Higher ranks produce "
             "larger output files and may slow down evaluation."
         ),
+    )
+
+    num_refusal_directions: PositiveInt = Field(
+        default=1,
+        description=(
+            "Number of residual directions to compute per layer. "
+            "1 uses the difference-of-means approach. Higher values cluster the bad-prompt "
+            "residuals to capture multiple distinct refusal patterns simultaneously, and "
+            "each direction contributes one rank-1 update to the LoRA adapter."
+        ),
+    )
+
+    clustering_method: ClusteringMethod = Field(
+        default=ClusteringMethod.KMEANS,
+        description=(
+            "Clustering method used to compute multiple residual directions per layer. "
+            'Options: "kmeans" (k-means clustering), "som" (self-organizing map). '
+            "Only used when num_refusal_directions is greater than 1."
+        ),
+    )
+
+    som_grid_size: PositiveInt = Field(
+        default=4,
+        description=(
+            "Side length of the square self-organizing map grid. The grid contains "
+            "som_grid_size squared neurons, from which the num_refusal_directions neurons "
+            "with the highest activation counts are selected."
+        ),
+    )
+
+    som_iterations: PositiveInt = Field(
+        default=10000,
+        description="Number of training iterations for the self-organizing map.",
+    )
+
+    som_learning_rate: float = Field(
+        default=0.5,
+        description="Initial learning rate for self-organizing map training.",
+    )
+
+    som_sigma: float = Field(
+        default=1.0,
+        description="Initial neighborhood radius for self-organizing map training.",
     )
 
     winsorization_quantile: float = Field(

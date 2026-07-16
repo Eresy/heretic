@@ -111,6 +111,32 @@ row_normalization = "full"
 # larger output files and may slow down evaluation.
 full_normalization_lora_rank = 3
 
+# Number of residual directions to compute per layer.
+# 1 uses the difference-of-means approach. Higher values cluster the bad-prompt
+# residuals to capture multiple distinct refusal patterns simultaneously, and
+# each direction contributes one rank-1 update to the LoRA adapter.
+num_refusal_directions = 1
+
+# Clustering method used to compute multiple residual directions per layer. Options:
+# "kmeans" (k-means clustering),
+# "som" (self-organizing map).
+# Only used when num_refusal_directions is greater than 1.
+clustering_method = "kmeans"
+
+# Side length of the square self-organizing map grid. The grid contains
+# som_grid_size squared neurons, from which the num_refusal_directions neurons
+# with the highest activation counts are selected.
+som_grid_size = 4
+
+# Number of training iterations for the self-organizing map.
+som_iterations = 10000
+
+# Initial learning rate for self-organizing map training.
+som_learning_rate = 0.5
+
+# Initial neighborhood radius for self-organizing map training.
+som_sigma = 1.0
+
 # The symmetric winsorization to apply to the per-prompt, per-layer residual vectors,
 # expressed as the quantile to clamp to (between 0 and 1). Disabled by default.
 # This can tame so-called "massive activations" that occur in some models.
