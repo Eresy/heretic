@@ -789,7 +789,11 @@ class Model:
 
         return torch.cat(residuals, dim=0)
 
-    def get_residuals_mean(self, prompts: list[Prompt]) -> Tensor:
+    def get_residuals_mean(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> Tensor:
         if not prompts:
             raise ValueError("prompts must not be empty")
 
@@ -797,7 +801,7 @@ class Model:
         total_count = 0
 
         for batch in batchify(prompts, self.settings.batch_size):
-            batch_residuals = self.get_residuals(batch)
+            batch_residuals = self.get_residuals(batch, chat_template_kwargs)
 
             # Accumulate in high precision on CPU to reduce peak VRAM usage.
             batch_sum = batch_residuals.sum(dim=0, dtype=torch.float64).cpu()

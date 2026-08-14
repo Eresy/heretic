@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
+from typing import Any, Dict
+
 import torch.nn.functional as F
 from pydantic import BaseModel, Field
 
@@ -18,6 +20,15 @@ class Settings(BaseModel):
             column="text",
         ),
         description="Prompt dataset used to measure KL divergence from original model.",
+    )
+
+    chat_template_kwargs: Dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Chat template arguments for this instance, overriding the global "
+            "chat_template_kwargs. The baseline and the current model are always "
+            "measured with the same arguments, so the divergence stays meaningful."
+        ),
     )
 
 
@@ -44,12 +55,14 @@ class KLDivergence(Scorer):
         print(f"* [bold]{len(self.prompts)}[/] prompts loaded")
 
         print("* Obtaining baseline first-token probability distributions...")
-        baseline_logits = ctx.get_logits(self.prompts)
+        baseline_logits = ctx.get_logits(
+            self.prompts, self.settings.chat_template_kwargs
+        )
 
         self._baseline_logprobs = F.log_softmax(baseline_logits, dim=-1)
 
     def get_score(self, ctx: Context) -> Score:
-        logits = ctx.get_logits(self.prompts)
+        logits = ctx.get_logits(self.prompts, self.settings.chat_template_kwargs)
         logprobs = F.log_softmax(logits, dim=-1)
         kl = F.kl_div(
             logprobs,
