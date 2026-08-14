@@ -51,6 +51,19 @@ max_batch_size = 128
 # Maximum number of tokens to generate for each response.
 max_response_length = 100
 
+# Extra keyword arguments passed to the tokenizer's chat template, e.g.
+# chat_template_kwargs = { enable_thinking = false }
+# chat_template_kwargs = { reasoning_effort = "low" }
+# Scorers can override this per instance under [scorer.<ClassName>_<instance_name>]
+# to evaluate the same model under different template settings in one run.
+chat_template_kwargs = {}
+
+# Common prefix to assume for all responses, so that evaluation happens at the
+# point where responses start to differ for different prompts. If unset, it is
+# determined automatically, which costs 200 generations before the first trial.
+# Set to "" to skip that check and use no prefix.
+# response_prefix = ""
+
 # List of pairs of the form [cot_initializer, closed_cot_block] used to skip
 # the Chain-of-Thought block in responses, so that evaluation happens
 # at the start of the actual response.

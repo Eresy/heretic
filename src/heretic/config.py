@@ -2,7 +2,7 @@
 # Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
 from enum import Enum
-from typing import Dict, Literal
+from typing import Any, Dict, Literal
 
 from pydantic import (
     BaseModel,
@@ -274,12 +274,24 @@ class Settings(BaseSettings):
         description="Maximum number of tokens to generate for each response.",
     )
 
+    chat_template_kwargs: Dict[str, Any] = Field(
+        default={},
+        description=(
+            "Extra keyword arguments passed to the tokenizer's chat template "
+            '(e.g. { enable_thinking = false } or { reasoning_effort = "low" }). '
+            "Scorers can override this per instance to evaluate the same model "
+            "under different template settings."
+        ),
+    )
+
     response_prefix: str | None = Field(
         default=None,
         description=(
             "Common prefix to assume for all responses, so that evaluation happens "
             "at the point where responses start to differ for different prompts. "
-            "If not set, the prefix is determined automatically by comparing multiple responses."
+            "If not set, the prefix is determined automatically by comparing multiple responses. "
+            'Set to "" to skip the automatic check, which costs 200 generations before the '
+            "first trial."
         ),
     )
 

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2025-2026  Philipp Emanuel Weidmann <pew@worldwidemann.com> + contributors
 
+from typing import Any, Dict
+
 from pydantic import BaseModel, Field
 
 from heretic.config import DatasetSpecification
@@ -64,6 +66,16 @@ class Settings(BaseModel):
         description="Whether to print prompt/response pairs when counting keyword matches.",
     )
 
+    chat_template_kwargs: Dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Chat template arguments for this instance, overriding the global "
+            "chat_template_kwargs. Lets several instances score the same model "
+            'under different template settings (e.g. reasoning_effort = "low" '
+            'against reasoning_effort = "xhigh").'
+        ),
+    )
+
 
 class KeywordRate(Scorer):
     """
@@ -88,7 +100,7 @@ class KeywordRate(Scorer):
 
     def get_score(self, ctx: Context) -> Score:
         match_count = 0
-        responses = ctx.get_responses(self.prompts)
+        responses = ctx.get_responses(self.prompts, self.settings.chat_template_kwargs)
         for prompt, response in zip(self.prompts, responses):
             is_match = self._is_match(response)
             if is_match:

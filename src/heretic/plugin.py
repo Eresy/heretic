@@ -147,6 +147,10 @@ def load_plugin(
     return plugin_cls
 
 
+# Prompts plus the chat-template settings they were rendered with.
+CacheKey = tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]
+
+
 class Context:
     """
     Runtime context passed to plugins
@@ -160,25 +164,51 @@ class Context:
     def __init__(self, settings: HereticSettings, model: Model) -> None:
         self._model = model
         self._settings = settings
-        self._responses_cache: dict[tuple[tuple[str, str], ...], list[str]] = {}
+        self._responses_cache: dict[CacheKey, list[str]] = {}
 
-    def _cache_key(self, prompts: list[Prompt]) -> tuple[tuple[str, str], ...]:
-        return tuple((p.system, p.user) for p in prompts)
+    def _cache_key(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None,
+    ) -> CacheKey:
+        # The template kwargs are part of the key: two scorers may share a prompt
+        # set but evaluate it under different template settings, which produces
+        # genuinely different responses.
+        return (
+            tuple((p.system, p.user) for p in prompts),
+            tuple(
+                sorted((k, repr(v)) for k, v in (chat_template_kwargs or {}).items())
+            ),
+        )
 
-    def get_responses(self, prompts: list[Prompt]) -> list[str]:
+    def get_responses(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> list[str]:
         """Get model responses (cached within this context)."""
-        key = self._cache_key(prompts)
+        key = self._cache_key(prompts, chat_template_kwargs)
         if key not in self._responses_cache:
             self._responses_cache[key] = self._model.get_responses_batched(
-                prompts, skip_special_tokens=True
+                prompts,
+                skip_special_tokens=True,
+                chat_template_kwargs=chat_template_kwargs,
             )
         return self._responses_cache[key]
 
-    def get_logits(self, prompts: list[Prompt]) -> Tensor:
-        return self._model.get_logits_batched(prompts)
+    def get_logits(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> Tensor:
+        return self._model.get_logits_batched(prompts, chat_template_kwargs)
 
-    def get_residuals(self, prompts: list[Prompt]) -> Tensor:
-        return self._model.get_residuals_batched(prompts)
+    def get_residuals(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> Tensor:
+        return self._model.get_residuals_batched(prompts, chat_template_kwargs)
 
     def load_prompts(self, specification: DatasetSpecification) -> list[Prompt]:
         return load_prompts(self._settings, specification)

@@ -628,6 +628,7 @@ class Model:
     def generate(
         self,
         prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> tuple[BatchEncoding, GenerateDecoderOnlyOutput | LongTensor]:
         chats = [
@@ -638,6 +639,14 @@ class Model:
             for prompt in prompts
         ]
 
+        # Templates can expose model-specific switches (e.g. Qwen3.5's
+        # "enable_thinking" and "reasoning_effort") that change what the prompt
+        # ends with, and therefore both what gets generated and where residuals
+        # are taken. Callers may override the global setting to evaluate the same
+        # model under several template settings within one run.
+        if chat_template_kwargs is None:
+            chat_template_kwargs = self.settings.chat_template_kwargs
+
         # This cast is valid because list[str] is the return type
         # for batched operation with tokenize=False.
         chat_prompts = cast(
@@ -646,6 +655,7 @@ class Model:
                 chats,
                 add_generation_prompt=True,
                 tokenize=False,
+                **chat_template_kwargs,
             ),
         )
 
@@ -678,9 +688,11 @@ class Model:
         self,
         prompts: list[Prompt],
         skip_special_tokens: bool = False,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[str]:
         inputs, outputs = self.generate(
             prompts,
+            chat_template_kwargs=chat_template_kwargs,
             max_new_tokens=self.settings.max_response_length,
         )
 
@@ -696,6 +708,7 @@ class Model:
         self,
         prompts: list[Prompt],
         skip_special_tokens: bool = False,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> list[str]:
         responses = []
         for batch in batchify(prompts, self.settings.batch_size):
@@ -707,11 +720,16 @@ class Model:
 
         return responses
 
-    def get_residuals(self, prompts: list[Prompt]) -> Tensor:
+    def get_residuals(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> Tensor:
         # We only generate one token, and we return the residual vectors
         # at that token position, for each prompt and layer.
         _, outputs = self.generate(
             prompts,
+            chat_template_kwargs=chat_template_kwargs,
             max_new_tokens=1,
             output_hidden_states=True,
             return_dict_in_generate=True,
@@ -759,11 +777,15 @@ class Model:
 
         return residuals
 
-    def get_residuals_batched(self, prompts: list[Prompt]) -> Tensor:
+    def get_residuals_batched(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> Tensor:
         residuals = []
 
         for batch in batchify(prompts, self.settings.batch_size):
-            residuals.append(self.get_residuals(batch))
+            residuals.append(self.get_residuals(batch, chat_template_kwargs))
 
         return torch.cat(residuals, dim=0)
 
@@ -791,11 +813,16 @@ class Model:
 
         return (running_sum / total_count).to(torch.float32)
 
-    def get_logits(self, prompts: list[Prompt]) -> Tensor:
+    def get_logits(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> Tensor:
         # We only generate one token, and we return the raw logits over the vocabulary
         # at that token position, for each prompt.
         _, outputs = self.generate(
             prompts,
+            chat_template_kwargs=chat_template_kwargs,
             max_new_tokens=1,
             output_logits=True,
             return_dict_in_generate=True,
@@ -820,11 +847,15 @@ class Model:
 
         return logits
 
-    def get_logits_batched(self, prompts: list[Prompt]) -> Tensor:
+    def get_logits_batched(
+        self,
+        prompts: list[Prompt],
+        chat_template_kwargs: dict[str, Any] | None = None,
+    ) -> Tensor:
         logits = []
 
         for batch in batchify(prompts, self.settings.batch_size):
-            logits.append(self.get_logits(batch))
+            logits.append(self.get_logits(batch, chat_template_kwargs))
 
         return torch.cat(logits, dim=0)
 
@@ -837,6 +868,7 @@ class Model:
                 chat,
                 add_generation_prompt=True,
                 tokenize=False,
+                **self.settings.chat_template_kwargs,
             ),
         )
 
