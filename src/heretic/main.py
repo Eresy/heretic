@@ -362,6 +362,12 @@ def run():
         )
         return
 
+    # Route float32 matrix multiplications through the tensor cores when asked to.
+    # This matters most for gradient-based abliteration methods, which run their
+    # optimization in float32 and would otherwise use the much slower non-tensor
+    # float32 pipelines.
+    torch.set_float32_matmul_precision(settings.float32_matmul_precision)
+
     if settings.collect_reproducibles is not None:
         collect_reproducibles(settings.collect_reproducibles)
         return

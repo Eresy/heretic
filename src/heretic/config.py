@@ -214,6 +214,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    float32_matmul_precision: Literal["highest", "high", "medium"] = Field(
+        default="highest",
+        description=(
+            "Internal precision of float32 matrix multiplications, passed to "
+            "torch.set_float32_matmul_precision. Options: "
+            '"highest" (true float32), '
+            '"high" (TensorFloat-32 or bfloat16 inputs with float32 accumulation), '
+            '"medium" (bfloat16 inputs with float32 accumulation). '
+            "Only the multiplication inputs are rounded; tensors and accumulators "
+            "remain float32, so optimizer state and weight updates keep full precision."
+        ),
+    )
+
     quantization: QuantizationMethod = Field(
         default=QuantizationMethod.NONE,
         description=(
