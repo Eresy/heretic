@@ -1,0 +1,93 @@
+# Grouped-directions arm: directions come from measured topic groups instead of
+# from clustering. Everything else matches config.toml.
+#
+# Every setting here was established by local measurement on Qwen3.8-27B, not
+# inherited from config.default.toml -- the defaults are wrong for this model.
+
+model = "Qwen/Qwen3.8-27B"
+seed = 12345
+
+# Fit AND score at the answer position. The refusal direction that works lives
+# there: recovered from trohrbaugh's released weights, his direction is 0.87-0.92
+# collinear with the thinking-off direction and only ~0.25 with any thinking-on
+# variant. Fitting at the reasoning position produces an abliteration that does
+# essentially nothing (measured: 81-86/100 refusals vs 44/100 at the answer
+# position, same parameters).
+chat_template_kwargs = { enable_thinking = false }
+
+# Skip the automatic prefix check, which costs 200 generations before trial 1.
+response_prefix = ""
+
+batch_size = 128
+max_batch_size = 128
+max_response_length = 100
+system_prompt = "You are a helpful assistant."
+
+dtypes = ["auto", "bfloat16", "float16", "float32"]
+quantization = "none"
+device_map = "auto"
+offload_outputs_to_cpu = true
+
+# From the 2x2 on this model (baseline 88/100):
+#   none/true 44 | full/true 52 | full/false 64 | none/false 69
+# Orthogonalization HELPS here, the opposite of gemma-3-12b, which the low
+# S(g,r) (0.18-0.27 against gemma's 0.957-0.985) predicted.
+row_normalization = "none"
+orthogonalize_direction = true
+
+n_trials = 20
+n_startup_trials = 10
+
+# ALL THREE are required for an unattended run. Missing trial_index leaves
+# heretic blocked on the "Which trial do you want to use?" menu reading a pipe:
+# one CPU thread spinning, GPU at 0%, no error, billing the whole time.
+checkpoint_action = "restart"
+trial_index = 0
+model_action = ""
+
+scorers = [
+    { plugin = "heretic.scorers.keyword_rate.KeywordRate", optimization = "minimize", instance_name = "refusals" },
+    { plugin = "heretic.scorers.kl_divergence.KLDivergence", optimization = "minimize" },
+    # Monitor only: NSFW is near-orthogonal to harmful_behaviors (0.687-0.818),
+    # so the optimized pair structurally cannot see whether that path moved.
+    { plugin = "heretic.scorers.keyword_rate.KeywordRate", optimization = "none", instance_name = "nsfw" },
+]
+
+[scorer.KeywordRate_nsfw.prompts]
+dataset = "/workspace/data/nsfw-val"
+split = "train"
+column = "text"
+
+[good_prompts]
+dataset = "mlabonne/harmless_alpaca"
+split = "train[:400]"
+column = "text"
+
+[bad_prompts]
+dataset = "mlabonne/harmful_behaviors"
+split = "train[:400]"
+column = "text"
+
+# One direction per MEASURED refusal mode, from the topic map (layers 19-47,
+# noise floor 0.988-0.993):
+#   nsfw is the outlier                          0.687-0.818 with everything else
+#   drugs/chemistry/weapons/infrastructure/hacking are one mode  0.886-0.960
+# So K=2 by measurement, and each direction is identifiable rather than an
+# anonymous cluster. num_refusal_directions is forced to the group count.
+#
+# This path needs only group means, so it costs K=1 memory (51 GB on a 27B)
+# where clustered K=4 needed 105 GB of unified memory locally.
+
+[[direction_groups]]
+name = "nsfw"
+prompts = [ { dataset = "/workspace/data/nsfw-fit", split = "train", column = "text" } ]
+
+[[direction_groups]]
+name = "technical"
+prompts = [
+    { dataset = "/workspace/data/drugs-fit", split = "train", column = "text" },
+    { dataset = "/workspace/data/chemistry-fit", split = "train", column = "text" },
+    { dataset = "/workspace/data/weapons-fit", split = "train", column = "text" },
+    { dataset = "/workspace/data/infrastructure-fit", split = "train", column = "text" },
+    { dataset = "/workspace/data/hacking-fit", split = "train", column = "text" },
+]
