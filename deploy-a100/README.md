@@ -108,9 +108,15 @@ one mode are not spent. Fewer directions removed means less capability removed.
 
 ## Data
 
-`topic-sets.tgz` holds seven topics as `{topic}-{fit,val,test}`, built only from
+`topic-sets/` holds seven topics as `{topic}-{fit,val,test}/train.jsonl`, built only from
 published benchmarks (SALAD-Bench, HarmBench, JBB-Behaviors, SORRY-Bench base
 style), deduplicated across sources and filtered against
 `mlabonne/harmful_behaviors` so the fitting sets cannot contaminate the eval.
 `val` is what the search scores against; `test` is untouched until the final
 model, so the val-to-test gap measures how much the search overfitted.
+
+JSONL rather than parquet or a tarball: this repo's `.gitattributes` is
+`* text eol=lf`, which normalises line endings in *binary* files too and
+corrupts them. JSON escaping also preserves the embedded newlines that 10 of the
+3673 prompts contain, which a plain one-per-line text file would silently split
+into extra prompts.

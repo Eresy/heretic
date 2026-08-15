@@ -1,1 +1,9 @@
 * text eol=lf
+
+# `* text eol=lf` above normalises line endings in binaries too, which
+# corrupts them. Keep binary assets out of that.
+*.tgz -text
+*.gz -text
+*.parquet -text
+*.safetensors -text
+*.png -text

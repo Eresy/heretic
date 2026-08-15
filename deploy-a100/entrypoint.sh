@@ -38,10 +38,12 @@ print('device', p.name, f'{p.total_memory/1024**3:.0f} GB')
 "
 
 echo "=== topic sets ==="
-# Shipped in the repo (212 KB), so the clone brings them and nothing needs
-# uploading before onstart runs.
+# Shipped in the repo as JSONL, not a tarball: this repo's .gitattributes is
+# `* text eol=lf`, which line-ending-normalises binaries and silently corrupts
+# them. JSON escapes the newlines that 10 of the 3673 prompts contain, so the
+# sets survive git intact and datasets reads them directly.
 mkdir -p /workspace/data
-tar xzf "$(dirname "$0")/topic-sets.tgz" -C /workspace/data
+cp -r "$(dirname "$0")/topic-sets/." /workspace/data/
 ls /workspace/data | tr '\n' ' '; echo
 
 echo "=== base model ==="
