@@ -674,8 +674,14 @@ def run():
     print()
     print("Calculating per-layer residual directions...")
 
+    # Explicit groups supersede clustering, and need only the group means, so the
+    # bad residuals are never needed individually.
+    use_direction_groups = bool(settings.direction_groups)
+
     # Clustering the bad residuals needs each one individually, not just their mean.
-    is_multi_direction = settings.num_refusal_directions > 1
+    is_multi_direction = (
+        settings.num_refusal_directions > 1 and not use_direction_groups
+    )
 
     needs_analysis = settings.print_residual_geometry or settings.plot_residuals
     needs_full_residuals = needs_analysis or is_multi_direction
@@ -723,6 +729,26 @@ def run():
             bad_residuals, good_means, settings
         )
         del bad_residuals
+    elif use_direction_groups:
+        # One direction per group: the offset of the group's mean residual from
+        # the good mean. Pooling several prompt sets into a group spends one
+        # direction on a whole cluster of topics that share a refusal mode.
+        directions = []
+
+        for group in settings.direction_groups:
+            group_prompts = [
+                prompt
+                for specification in group.prompts
+                for prompt in load_prompts(settings, specification)
+            ]
+            print(
+                f"* Direction [bold]{group.name}[/]: "
+                f"[bold]{len(group_prompts)}[/] prompts"
+            )
+            group_means = model.get_residuals_mean(group_prompts)
+            directions.append(F.normalize(group_means - good_means, p=2, dim=1))
+
+        residual_directions = torch.stack(directions, dim=1)
     else:
         # A single direction per layer is the difference of the means.
         residual_directions = F.normalize(bad_means - good_means, p=2, dim=1).unsqueeze(

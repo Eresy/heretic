@@ -10,6 +10,7 @@ from pydantic import (
     NonNegativeInt,
     PositiveInt,
     field_validator,
+    model_validator,
 )
 from pydantic_settings import (
     BaseSettings,
@@ -94,6 +95,30 @@ class DatasetSpecification(BaseModel):
         default=None,
         description="Matplotlib color to use for the dataset in plots of residual vectors.",
         exclude=True,
+    )
+
+
+class DirectionGroup(BaseModel):
+    """
+    A named group of prompt sets that together define one refusal direction.
+
+    Topics whose directions are collinear share a refusal mode, so grouping them
+    spends one direction where per-topic fitting would spend several on the same
+    mode. Which topics belong together is a measurement, not a guess: fit each
+    topic separately and compare, then group the ones that overlap at their noise
+    floor.
+    """
+
+    name: str = Field(
+        description="Name of the group, used only for display.",
+    )
+
+    prompts: list[DatasetSpecification] = Field(
+        description=(
+            "Prompt sets that are pooled to compute this group's direction. "
+            "Several sets can be combined so that one direction covers a whole "
+            "cluster of related topics."
+        ),
     )
 
 
@@ -410,6 +435,18 @@ class Settings(BaseSettings):
         ),
     )
 
+    direction_groups: list[DirectionGroup] = Field(
+        default=[],
+        description=(
+            "Named groups of prompt sets, one refusal direction per group. When "
+            "set, directions come from these groups instead of from clustering "
+            "the bad prompts, num_refusal_directions is forced to the number of "
+            "groups, and the bad prompts are used only for evaluation. Leave "
+            "empty to use the standard difference-of-means or clustered "
+            "directions."
+        ),
+    )
+
     num_refusal_directions: PositiveInt = Field(
         default=1,
         description=(
@@ -638,6 +675,18 @@ class Settings(BaseSettings):
     # configuration in TOML tables like `[scorer.KeywordRate]` which are later
     # consumed via `settings.model_extra` (see `Evaluator._get_plugin_namespace`).
     model_config = SettingsConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def _match_direction_count_to_groups(self) -> "Settings":
+        # The LoRA rank is chosen when the model loads (model.py:214), from
+        # num_refusal_directions. A group count that disagreed with it would give
+        # an adapter too small to hold every direction, and the extra ones would
+        # be silently lost, so reconcile the two here rather than at the point
+        # the directions are built.
+        if self.direction_groups:
+            self.num_refusal_directions = len(self.direction_groups)
+
+        return self
 
     @classmethod
     def settings_customise_sources(
