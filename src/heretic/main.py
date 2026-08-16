@@ -1573,10 +1573,19 @@ def run():
                                 continue
                             benchmark_original_model = scope == "Benchmark both models"
 
+                            # max_length is passed because lm_eval's "auto" batch sizing
+                            # probes against the model's full context window. On a
+                            # long-context model that is catastrophic: Qwen3.8-27B
+                            # advertises 262144 tokens, the probe finds only batch 1 fits,
+                            # and GSM8K's 1319 generative requests were measured at
+                            # 11.9-22.8 s each -- 4-8 hours per model, at 39% GPU
+                            # utilization. Benchmarks need a few thousand tokens, not the
+                            # full window.
                             hflm = HFLM(
                                 pretrained=model.model,  # ty:ignore[invalid-argument-type]
                                 tokenizer=model.tokenizer,  # ty:ignore[invalid-argument-type]
-                                batch_size="auto",
+                                batch_size=settings.benchmark_batch_size,
+                                max_length=settings.benchmark_max_length,
                             )
 
                             table = Table()

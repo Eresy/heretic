@@ -175,6 +175,16 @@ n_startup_trials = 60
 # Directory to save and load study progress to/from.
 study_checkpoint_dir = "checkpoints"
 
+# Batch size for benchmarks, or "auto" to let the harness decide. "auto" sizes its probe
+# against the full context window, so on a long-context model it degenerates to 1 and
+# benchmarks take hours.
+benchmark_batch_size = 32
+
+# Maximum sequence length reported to the benchmark harness. Independent of the model's
+# real context window, which is far larger than any benchmark needs and makes batching
+# impossible.
+benchmark_max_length = 4096
+
 # Maximum size for individual safetensors files generated when exporting a model.
 max_shard_size = "5GB"
 

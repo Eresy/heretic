@@ -525,6 +525,24 @@ class Settings(BaseSettings):
         exclude=True,
     )
 
+    benchmark_batch_size: int | str = Field(
+        default=32,
+        description=(
+            'Batch size for benchmarks, or "auto" to let the harness decide. '
+            '"auto" sizes its probe against the full context window, so on a '
+            "long-context model it degenerates to 1 and benchmarks take hours."
+        ),
+    )
+
+    benchmark_max_length: int = Field(
+        default=4096,
+        description=(
+            "Maximum sequence length reported to the benchmark harness. Independent of "
+            "the model's real context window, which is far larger than any benchmark "
+            "needs and makes batching impossible."
+        ),
+    )
+
     benchmarks: list[BenchmarkSpecification] = Field(
         default=[
             BenchmarkSpecification(
