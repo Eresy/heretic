@@ -1,6 +1,12 @@
 #!/bin/bash
-# Three arms, 20 trials each, identical except for how directions are obtained.
-# Run only after probe-memory.sh confirms K=4 fits and gives a real s/trial.
+# One arm, 400 trials, K=4 k-means directions. Run only after probe-memory.sh confirms
+# it fits and gives a real s/trial.
+#
+# The 20-trial k1/groups arms are gone: at 20 trials neither produced a single trial
+# under 10 refusals, so they measured nothing. The budget goes to one arm that can
+# actually search the widened space (max_weight_position floor 0.2 rather than 0.6, and
+# linear_attn.out_proj split off from attn.o_proj). Add `run groups
+# "$DEPLOY/config-groups.toml"` below to spend another ~6 h on the named-topic arm.
 set -e
 
 # The vastai/pytorch image keeps its environment here.
@@ -24,9 +30,7 @@ run() {  # name, config, extra args...
     cd - >/dev/null
 }
 
-run k1     "$DEPLOY/config.toml"        --num-refusal-directions 1
-run k4     "$DEPLOY/config.toml"        --num-refusal-directions 4
-run groups "$DEPLOY/config-groups.toml"
+run k4 "$DEPLOY/config.toml" --num-refusal-directions 4
 
 echo
 echo "Pareto fronts:"

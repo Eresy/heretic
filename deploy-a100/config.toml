@@ -18,8 +18,13 @@ chat_template_kwargs = { enable_thinking = false }
 # Skip the automatic prefix check, which costs 200 generations before trial 1.
 response_prefix = ""
 
-batch_size = 128
-max_batch_size = 128
+# 64, not 128: at 128 the GatedDeltaNet activations push peak VRAM to ~84 GB and
+# OOM an 80 GB card. Also note refusal counts are only comparable ACROSS RUNS at
+# a fixed batch size -- left-padding means batch composition changes each prompt's
+# padding, which shifts logits and flips borderline greedy decodes. The same base
+# model scored 88, 93 and 100/100 across three of our harnesses for this reason.
+batch_size = 64
+max_batch_size = 64
 max_response_length = 100
 system_prompt = "You are a helpful assistant."
 
@@ -35,8 +40,14 @@ offload_outputs_to_cpu = true
 row_normalization = "none"
 orthogonalize_direction = true
 
-n_trials = 20
-n_startup_trials = 10
+# The search space is 14 parameters now, not 10: direction_scope, direction_index, and
+# four each for attn.o_proj, linear_attn.out_proj and mlp.down_proj, since the hybrid
+# model's two attention operators are optimized separately. Startup trials are random,
+# so they are what maps a space this size before TPE starts exploiting; 100 of 400 is the
+# same quarter the previous run used. The extra budget is also the answer to whether the
+# 200-trial run simply stopped early -- its Pareto front was still improving at trial 193.
+n_trials = 400
+n_startup_trials = 100
 
 # ALL THREE are required for an unattended run. Missing trial_index leaves
 # heretic blocked on the "Which trial do you want to use?" menu reading a pipe:

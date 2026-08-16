@@ -14,6 +14,24 @@ set -e
 # over the image's CUDA build.
 source /venv/main/bin/activate
 
+# The template's env reaches onstart, but NOT a later non-interactive shell -- so
+# `ssh <host> bash entrypoint.sh` or any re-run sees an empty HF_TOKEN and the model
+# download fails on a gated repo. Persist it on the first pass, read it back on later
+# ones. /etc/environment takes KEY=value lines, which is why only this one variable is
+# written rather than the whole of `env` (LS_COLORS and friends contain characters that
+# break the file's parser).
+if [ -z "${HF_TOKEN:-}" ] && [ -r /etc/environment ]; then
+    HF_TOKEN=$(sed -n 's/^HF_TOKEN=//p' /etc/environment | tail -1)
+    export HF_TOKEN
+fi
+
+if [ -z "${HF_TOKEN:-}" ]; then
+    echo "FATAL: HF_TOKEN is empty. Qwen3.8-27B is gated, so the download would 401." >&2
+    exit 1
+fi
+
+grep -q '^HF_TOKEN=' /etc/environment 2>/dev/null || echo "HF_TOKEN=$HF_TOKEN" >> /etc/environment
+
 echo "=== GPU ==="
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 
@@ -27,6 +45,42 @@ git pull --ff-only || true
 # torch is already present and correct for this machine. `-e .` leaves it alone
 # because pyproject deliberately does not pin a torch version.
 pip install -q -e '.[research]'
+
+echo "=== GatedDeltaNet fast path ==="
+# transformers gates the GatedDeltaNet fast path on BOTH causal-conv1d and
+# flash-linear-attention being importable (modeling_qwen3_5.py, is_fast_path_available).
+# With either missing it silently uses torch_chunk_gated_delta_rule, which is what the
+# first A100 run did -- and heretic calls transformers.logging.set_verbosity_error(), so
+# the warning never reaches the log and there is no way to notice from the output.
+#
+# flash-linear-attention is pure Python plus Triton, so PyPI has a wheel.
+# causal-conv1d publishes only an sdist to PyPI; the prebuilt wheels live on GitHub
+# releases and are tagged by exact torch minor, CUDA major, cpython version and C++ ABI.
+# That is why the image tag must be pinned: with @vastai-automatic-tag the torch version
+# is whatever the machine resolves to, no wheel matches, and pip compiles with nvcc for
+# 30-60 minutes of GPU-billed time.
+pip install -q flash-linear-attention
+
+CONV1D_VERSION="1.6.2.post1"
+TORCH_VERSION="$(python -c 'import torch; print(".".join(torch.__version__.split(".")[:2]))')"
+CUDA_MAJOR="cu$(python -c 'import torch; print(torch.version.cuda.split(".")[0])')"
+ABI="$(python -c 'import torch; print("TRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "FALSE")')"
+PYTHON_TAG="cp$(python -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")')"
+WHEEL="causal_conv1d-${CONV1D_VERSION}+${CUDA_MAJOR}torch${TORCH_VERSION}cxx11abi${ABI}-${PYTHON_TAG}-${PYTHON_TAG}-linux_x86_64.whl"
+echo "wheel: $WHEEL"
+
+# --no-build-isolation is not enough to prevent a source build; installing the wheel by
+# URL is. If the URL 404s the pin is wrong, and stopping is correct -- a silent fallback
+# to the sdist would burn the build time this whole block exists to avoid.
+pip install -q "https://github.com/Dao-AILab/causal-conv1d/releases/download/v${CONV1D_VERSION}/${WHEEL}"
+
+python -c "
+from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
+import sys
+if not is_fast_path_available:
+    sys.exit('FATAL: GatedDeltaNet fast path is off -- the run would be on the torch fallback')
+print('fast path available')
+"
 
 python -c "
 import torch, sys
