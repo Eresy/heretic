@@ -56,12 +56,21 @@ orthogonalize_direction = true
 n_trials = 400
 n_startup_trials = 100
 
-# ALL THREE are required for an unattended run. Missing trial_index leaves
-# heretic blocked on the "Which trial do you want to use?" menu reading a pipe:
-# one CPU thread spinning, GPU at 0%, no error, billing the whole time.
 checkpoint_action = "restart"
-trial_index = 0
-model_action = ""
+
+# trial_index and model_action are deliberately UNSET so the Pareto menu appears at the
+# end and the trial gets chosen by hand. The old warning still applies and is the reason
+# this is a decision rather than a default: with them unset, heretic blocks on "Which
+# trial do you want to use?" -- one CPU thread spinning, GPU at 0%, no error, billing the
+# whole time. That is only acceptable because the run now lives in a tmux session with a
+# real tty (see run-arms.sh, which no longer pipes through tee) and someone is expected to
+# answer it.
+#
+# Set them back to `trial_index = 0` and `model_action = ""` for a genuinely unattended
+# run. Nothing is lost by doing so: the journal records every trial either way, and
+# select-trial.py reopens the menu on a finished study whenever you are ready.
+# trial_index = 0
+# model_action = ""
 
 scorers = [
     { plugin = "heretic.scorers.keyword_rate.KeywordRate", optimization = "minimize", instance_name = "refusals" },
