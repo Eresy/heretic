@@ -25,10 +25,35 @@ tail -20 /var/log/onstart.log 2>/dev/null || bash /workspace/heretic/deploy-a100
 bash heretic/deploy-a100/probe-memory.sh      # ~15 min, RUN THIS FIRST
 bash heretic/deploy-a100/run-arms.sh          # 1 arm x 400 trials, ~6 h
 
+# pick a trial by hand once the run finishes (see "Choosing a trial" below)
+python heretic/deploy-a100/select-trial.py \
+    /workspace/runs/k4/checkpoints-k4/--workspace--Qwen3--8-27B.jsonl
+cd /workspace/runs/k4 && heretic --model /workspace/Qwen3.8-27B \
+    --study-checkpoint-dir checkpoints-k4 --checkpoint-action continue
+
 # copy results out, then destroy IMMEDIATELY — do not analyse while it bills
 vastai copy <ID>:/workspace/runs local:./runs
 vastai destroy instance <ID> -y
 ```
+
+## Choosing a trial
+
+An unattended run needs `trial_index` and `model_action` pinned or it blocks on a prompt
+reading a pipe. The same pinning stops the Pareto menu appearing at the end, and
+`--checkpoint-action continue` cannot undo it: `main.py:538` replaces the entire settings
+object with the copy stored in the study, discarding CLI flags and `config.toml` alike.
+
+`select-trial.py` appends one corrected settings record to the Optuna journal, which is
+an append-only log where later records win. Then `continue` restores *those* settings and
+the menu appears. No trial is re-run, and nothing has to be reconstructed by hand from
+the log — which is what the previous run cost us.
+
+Export the **adapter**, not the merged model: it is a rank-1 LoRA, small enough to copy
+back over `vastai copy` in seconds, and it merges locally against
+`~/data/qwen3.8-27B-safetensor`. A merged export is another 52 GB across the wire.
+
+Bring home `/workspace/runs/` in full regardless — the journal holds every trial's
+parameters and scores, so any other trial stays selectable later.
 
 ## Template
 
