@@ -80,9 +80,19 @@ scorers = [
     { plugin = "heretic.scorers.keyword_rate.KeywordRate", optimization = "none", instance_name = "nsfw" },
 ]
 
+# Capped at 64, and the cap is worth real money. This scorer is `optimization = "none"`,
+# so it never steers the search -- but heretic runs every scorer on every trial, and
+# generation is ~0.11 s per sequence here. The full 283-prompt set therefore costs ~31 s
+# of a 73 s trial, 42% of the run, to record a number nothing acts on: 3.4 h and ~$4 over
+# 400 trials.
+#
+# 64 is not arbitrary. The previous A100 run scored nsfw on 64 prompts -- not by choice,
+# but because the topic sets shipped as a tarball that git's `* text eol=lf` had corrupted,
+# so most of the set never arrived. Matching it keeps this run's nsfw figures comparable
+# with that one's (trial 116 scored 15/64 against a 61/64 baseline).
 [scorer.KeywordRate_nsfw.prompts]
 dataset = "/workspace/data/nsfw-val"
-split = "train"
+split = "train[:64]"
 column = "text"
 
 [good_prompts]
