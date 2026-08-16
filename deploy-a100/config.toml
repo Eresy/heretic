@@ -22,16 +22,19 @@ response_prefix = ""
 #   80 GB (A100, H100): 64. At 128 the GatedDeltaNet activations OOM the card.
 #  140 GB (H200 NVL):  128. Measured peak 97 GB, so ~43 GB spare.
 #
-# Raising it buys less than it looks like it should: measured 53 s/trial at 128 on an
-# H200 against 49 s/trial at 64 on an A100, so the bottleneck is not the batch. It also
-# costs comparability -- refusal counts only compare ACROSS RUNS at a fixed batch size,
-# because left-padding makes batch composition change each prompt's padding, which shifts
-# logits and flips borderline greedy decodes. The same base model scored 88, 93 and
+# Currently set for a 140 GB H200 NVL. Decode is bandwidth-bound on the weights -- the
+# same card is 1.76x an A100 against a 2.4x bandwidth ratio -- so doubling the batch
+# halves the per-sequence weight read and should pay. It also puts the 100-prompt refusal
+# eval in a single batch instead of 64 plus a ragged 36.
+#
+# The cost is comparability: refusal counts only compare ACROSS RUNS at a fixed batch
+# size, because left-padding makes batch composition change each prompt's padding, which
+# shifts logits and flips borderline greedy decodes. The same base model scored 88, 93 and
 # 100/100 across three of our harnesses for this reason.
 #
 # Pinning both values also skips batch-size autodetect, which costs several minutes.
-batch_size = 64
-max_batch_size = 64
+batch_size = 128
+max_batch_size = 128
 max_response_length = 100
 system_prompt = "You are a helpful assistant."
 
