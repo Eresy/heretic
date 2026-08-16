@@ -18,13 +18,10 @@ chat_template_kwargs = { enable_thinking = false }
 # Skip the automatic prefix check, which costs 200 generations before trial 1.
 response_prefix = ""
 
-# 64, not 128: at 128 the GatedDeltaNet activations push peak VRAM to ~84 GB and
-# OOM an 80 GB card. Also note refusal counts are only comparable ACROSS RUNS at
-# a fixed batch size -- left-padding means batch composition changes each prompt's
-# padding, which shifts logits and flips borderline greedy decodes. The same base
-# model scored 88, 93 and 100/100 across three of our harnesses for this reason.
-batch_size = 64
-max_batch_size = 64
+# Matches config.toml so the arms stay comparable. See the note there on why this is 128
+# on a 140 GB card and was 64 on an 80 GB one.
+batch_size = 128
+max_batch_size = 128
 max_response_length = 100
 system_prompt = "You are a helpful assistant."
 
