@@ -403,10 +403,14 @@ class Model:
         with suppress(Exception):
             try_add("attn.o_proj", layer.self_attn.o_proj)  # ty:ignore[possibly-missing-attribute]
 
-        # Qwen3.5 MoE hybrid layers use GatedDeltaNet (linear attention) instead of
-        # standard self-attention, so self_attn.o_proj doesn't exist on those layers.
+        # Hybrid models (Qwen3.5 MoE, Qwen3.8) use GatedDeltaNet (linear attention)
+        # instead of standard self-attention on most layers, so self_attn.o_proj doesn't
+        # exist there. This gets its own component rather than joining attn.o_proj: on
+        # Qwen3.8-27B only 16 of 64 layers carry gated attention, so lumping the two
+        # together applies a single weight schedule to two different operators and hides
+        # which of them holds the refusal behaviour.
         with suppress(Exception):
-            try_add("attn.o_proj", layer.linear_attn.out_proj)  # ty:ignore[possibly-missing-attribute]
+            try_add("linear_attn.out_proj", layer.linear_attn.out_proj)  # ty:ignore[possibly-missing-attribute]
 
         # Most dense models.
         with suppress(Exception):

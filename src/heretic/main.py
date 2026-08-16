@@ -822,7 +822,14 @@ def run():
             # removing refusals and tends to damage model intelligence more than
             # ablating the attention output, so on many models the optimum is to leave
             # it (mostly) untouched. See issue #202.
-            max_weight_lower_bound = -0.25 if component == "mlp.down_proj" else 0.8
+            #
+            # linear_attn.out_proj gets the same treatment. It is the majority operator
+            # on hybrid models (48 of 64 layers on Qwen3.8-27B) and whether refusal lives
+            # there at all is exactly what the split is meant to answer, so the optimizer
+            # has to be able to switch it off.
+            max_weight_lower_bound = (
+                -0.25 if component in ("mlp.down_proj", "linear_attn.out_proj") else 0.8
+            )
             max_weight = max(
                 0.0,
                 trial.suggest_float(
@@ -831,9 +838,15 @@ def run():
                     1.5,
                 ),
             )
+            # The lower bound is 0.2 rather than the upstream 0.6 because that floor can
+            # exclude the optimum outright. On Qwen3.8-27B it forbids any peak below
+            # layer 37.8, while the refusal direction is best removed around layer 24,
+            # where the bad-prompt residual is only 0.36 collinear with it -- against
+            # 0.75 in the last layers, where removing it deletes most of the
+            # representation and costs KL divergence for every refusal removed.
             max_weight_position = trial.suggest_float(
                 f"{component}.max_weight_position",
-                0.6 * last_layer_index,
+                0.2 * last_layer_index,
                 1.0 * last_layer_index,
             )
             # For sampling purposes, min_weight is expressed as a fraction of max_weight,
