@@ -18,22 +18,20 @@ chat_template_kwargs = { enable_thinking = false }
 # Skip the automatic prefix check, which costs 200 generations before trial 1.
 response_prefix = ""
 
-# 128 on a 140 GB H200 NVL. The earlier 64 was an 80 GB constraint: at 128 the
-# GatedDeltaNet activations push peak VRAM to ~84 GB, which OOMs an 80 GB card but leaves
-# ~56 GB spare here. Decode is bandwidth-bound on the weights, so the larger batch
-# amortizes the weight read across more sequences, and the 100-prompt refusal eval runs
-# as one batch rather than 64 + a ragged 36.
+# THIS VALUE IS CARD-DEPENDENT. CHECK IT BEFORE EVERY RUN.
+#   80 GB (A100, H100): 64. At 128 the GatedDeltaNet activations OOM the card.
+#  140 GB (H200 NVL):  128. Measured peak 97 GB, so ~43 GB spare.
 #
-# The cost is that refusal counts are only comparable ACROSS RUNS at a fixed batch size:
-# left-padding means batch composition changes each prompt's padding, which shifts logits
-# and flips borderline greedy decodes. The same base model scored 88, 93 and 100/100
-# across three of our harnesses for this reason. Comparability with the 200-trial A100
-# run is already gone regardless, since that one ran on the torch fallback for
-# GatedDeltaNet and on transformers 5.14.
+# Raising it buys less than it looks like it should: measured 53 s/trial at 128 on an
+# H200 against 49 s/trial at 64 on an A100, so the bottleneck is not the batch. It also
+# costs comparability -- refusal counts only compare ACROSS RUNS at a fixed batch size,
+# because left-padding makes batch composition change each prompt's padding, which shifts
+# logits and flips borderline greedy decodes. The same base model scored 88, 93 and
+# 100/100 across three of our harnesses for this reason.
 #
 # Pinning both values also skips batch-size autodetect, which costs several minutes.
-batch_size = 128
-max_batch_size = 128
+batch_size = 64
+max_batch_size = 64
 max_response_length = 100
 system_prompt = "You are a helpful assistant."
 
