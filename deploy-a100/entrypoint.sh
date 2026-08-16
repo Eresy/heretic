@@ -61,6 +61,15 @@ echo "=== GatedDeltaNet fast path ==="
 # 30-60 minutes of GPU-billed time.
 pip install -q flash-linear-attention
 
+# transformers is PINNED, and the pin is load-bearing. 5.15 renamed the kernel it looks
+# for from `fused_recurrent_gated_delta_rule` to `recurrent_gated_delta_rule`, ahead of
+# any fla release exporting that name -- fla 0.5.2 is the latest on PyPI and still exports
+# the old one. The lookup therefore returns None and the RECURRENT path silently falls
+# back to torch, which is the per-token decode loop and the bulk of the wall clock. The
+# chunk (prefill) and causal-conv1d kernels bind either way, so the failure is invisible
+# unless you check each one. Measured on 5.15: 3 of 4 bound.
+pip install -q "transformers==5.14.1"
+
 CONV1D_VERSION="1.6.2.post1"
 TORCH_VERSION="$(python -c 'import torch; print(".".join(torch.__version__.split(".")[:2]))')"
 CUDA_MAJOR="cu$(python -c 'import torch; print(torch.version.cuda.split(".")[0])')"
@@ -74,29 +83,40 @@ echo "wheel: $WHEEL"
 # to the sdist would burn the build time this whole block exists to avoid.
 pip install -q "https://github.com/Dao-AILab/causal-conv1d/releases/download/v${CONV1D_VERSION}/${WHEEL}"
 
-# How transformers reports this changed under us. Up to 5.14 the module exposed a
-# module-level `is_fast_path_available` boolean. From 5.15 the functions carry
-# `@use_kernel_func_from_hub_with_fallback(name, package)`, which resolves in the order
-# HF kernels -> the original package -> the torch implementation, and there is no flag to
-# read. Both versions agree on the precondition, though: the external package has to
-# import. Check the flag when it exists, and the imports either way.
+# Verify the OUTCOME, not the precondition. An earlier version of this check only proved
+# that causal_conv1d and fla import, which they do even when transformers then fails to
+# bind one of them -- exactly the 5.15 case above. On the pinned 5.14 the module-level
+# `is_fast_path_available` is authoritative: it is the AND of all four kernels having been
+# imported successfully. Treat its absence as fatal, since that means transformers has
+# moved to the decorator mechanism and this check no longer proves anything.
 python -c "
 import sys
-
-try:
-    from causal_conv1d import causal_conv1d_fn, causal_conv1d_update  # noqa: F401
-    from fla.ops.gated_delta_rule import chunk_gated_delta_rule  # noqa: F401
-except ImportError as error:
-    sys.exit(f'FATAL: GatedDeltaNet kernels not importable, the run would use the torch fallback: {error}')
 
 import transformers
 import transformers.models.qwen3_5.modeling_qwen3_5 as modeling
 
 available = getattr(modeling, 'is_fast_path_available', None)
-if available is False:
-    sys.exit('FATAL: transformers reports the GatedDeltaNet fast path as unavailable')
 
-print(f'fast path available (transformers {transformers.__version__})')
+if available is None:
+    sys.exit(
+        f'FATAL: transformers {transformers.__version__} has no is_fast_path_available. '
+        'The pin slipped, and kernel binding can no longer be verified this way.'
+    )
+
+if not available:
+    missing = [
+        name
+        for name in (
+            'causal_conv1d_fn',
+            'causal_conv1d_update',
+            'chunk_gated_delta_rule',
+            'fused_recurrent_gated_delta_rule',
+        )
+        if getattr(modeling, name, None) is None
+    ]
+    sys.exit(f'FATAL: GatedDeltaNet fast path off, unbound kernels: {missing}')
+
+print(f'fast path fully bound (transformers {transformers.__version__})')
 "
 
 python -c "
