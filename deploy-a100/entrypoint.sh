@@ -74,12 +74,29 @@ echo "wheel: $WHEEL"
 # to the sdist would burn the build time this whole block exists to avoid.
 pip install -q "https://github.com/Dao-AILab/causal-conv1d/releases/download/v${CONV1D_VERSION}/${WHEEL}"
 
+# How transformers reports this changed under us. Up to 5.14 the module exposed a
+# module-level `is_fast_path_available` boolean. From 5.15 the functions carry
+# `@use_kernel_func_from_hub_with_fallback(name, package)`, which resolves in the order
+# HF kernels -> the original package -> the torch implementation, and there is no flag to
+# read. Both versions agree on the precondition, though: the external package has to
+# import. Check the flag when it exists, and the imports either way.
 python -c "
-from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
 import sys
-if not is_fast_path_available:
-    sys.exit('FATAL: GatedDeltaNet fast path is off -- the run would be on the torch fallback')
-print('fast path available')
+
+try:
+    from causal_conv1d import causal_conv1d_fn, causal_conv1d_update  # noqa: F401
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule  # noqa: F401
+except ImportError as error:
+    sys.exit(f'FATAL: GatedDeltaNet kernels not importable, the run would use the torch fallback: {error}')
+
+import transformers
+import transformers.models.qwen3_5.modeling_qwen3_5 as modeling
+
+available = getattr(modeling, 'is_fast_path_available', None)
+if available is False:
+    sys.exit('FATAL: transformers reports the GatedDeltaNet fast path as unavailable')
+
+print(f'fast path available (transformers {transformers.__version__})')
 "
 
 python -c "
